@@ -9,6 +9,8 @@ from typing import Dict, Any, List, Optional
 
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, send_file
 from dotenv import load_dotenv
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
 
 # Load environments
 load_dotenv()
@@ -26,6 +28,13 @@ from ai_engine.gemini_service import HybridConversionEngine
 app = Flask(__name__)
 # Secure fallback secret key for development preview sessions
 app.secret_key = os.getenv("SECRET_KEY", "postman_pytest_migrator_super_secret_key_1337")
+
+# Configure session cookies for cross-origin iframe preview contexts
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SAMESITE="None",
+    SESSION_COOKIE_HTTPONLY=True
+)
 
 # Initialize SQLite database manager
 db_path = os.getenv("DATABASE_PATH", "database/pytest_migrator.db")
@@ -155,44 +164,120 @@ def generate_structured_python_code(api_name: str, method: str, endpoint: str,
 
 # --- PAGE ROUTES ---
 
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if "user_id" not in session:
+            if request.path in ["/upload", "/extract", "/generate-pytest", "/generate-recommendations"] or request.headers.get("Content-Type") == "application/json" or request.is_json:
+                return jsonify({"success": False, "error": "Authentication holding pattern. Please log in first."}), 401
+            return redirect(url_for("login_page"))
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    """Temporary health check endpoint."""
+    return jsonify({"status": "ok"})
+
+
 @app.route("/")
 def landing_page():
     """Serves the main landing introductory screen."""
     return render_template("landing.html")
 
 
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    """Handles new developer registration and account provisioning."""
+    if "user_id" in session:
+        return redirect(url_for("onboarding_page"))
+
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if not full_name or not email or not password or not confirm_password:
+            return render_template("register.html", error="All fields are required to join the workspace.")
+
+        if "@" not in email:
+            return render_template("register.html", error="Please provide a valid company email address.")
+
+        if len(password) < 6:
+            return render_template("register.html", error="Password criteria fail. Minimal length is 6 characters.")
+
+        if password != confirm_password:
+            return render_template("register.html", error="Password mismatch. Please verify confirmation entry.")
+
+        # Check existing user email handle
+        existing_user = db.get_user_by_email(email)
+        if existing_user:
+            return render_template("register.html", error="Email address is already in use by another workspace user.")
+
+        # Securely hash secrets and insert user
+        password_hash = generate_password_hash(password)
+        user_id = db.insert_user(full_name=full_name, email=email, password_hash=password_hash)
+
+        if not user_id:
+            return render_template("register.html", error="Failed to create account. Please try again.")
+
+        # Save session variables
+        session["user_id"] = user_id
+        session["email"] = email
+        session["full_name"] = full_name
+
+        return redirect(url_for("onboarding_page"))
+
+    return render_template("register.html")
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
-    """Renders the workspace credential gate."""
+    """Renders the workspace credential gate and verifies user sessions."""
+    if "user_id" in session:
+        return redirect(url_for("onboarding_page"))
+
     if request.method == "POST":
-        # Form submission validation
-        email = request.form.get("email")
-        password = request.form.get("password")
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
         
         if not email or "@" not in email:
             return render_template("login.html", error="Please provide a valid QA or development email.")
         if not password or len(password) < 6:
             return render_template("login.html", error="Password validation failed. Minimum 6 characters required.")
             
-        session["email"] = email
-        return redirect(url_for("onboarding_page"))
+        user = db.get_user_by_email(email)
+        if user and check_password_hash(user["password_hash"], password):
+            session["user_id"] = user["id"]
+            session["email"] = user["email"]
+            session["full_name"] = user["full_name"]
+            return redirect(url_for("onboarding_page"))
+        else:
+            return render_template("login.html", error="Invalid email address or signature credentials.")
 
     return render_template("login.html")
 
 
+@app.route("/logout")
+def logout_action():
+    """Clears workspace session memory and forces redirect."""
+    session.clear()
+    return redirect(url_for("login_page"))
+
+
 @app.route("/onboarding")
+@login_required
 def onboarding_page():
     """Displays the workflow setup instructions wizard."""
-    if "email" not in session:
-        return redirect(url_for("login_page"))
     return render_template("onboarding.html")
 
 
 @app.route("/dashboard")
+@login_required
 def dashboard_page():
     """Renders the main operation workspace panel."""
-    if "email" not in session:
-        return redirect(url_for("login_page"))
     collections = db.get_all_collections()
     return render_template("dashboard.html", collections=collections)
 
@@ -200,6 +285,7 @@ def dashboard_page():
 # --- FUNCTIONAL / IMPLEMENTED API ROUTES ---
 
 @app.route("/upload", methods=["POST"])
+@login_required
 def upload_collection():
     """
     Endpoint for uploading Postman collections. Handles validation on length,
@@ -281,6 +367,7 @@ def upload_collection():
 
 
 @app.route("/extract", methods=["POST"])
+@login_required
 def extract_apis():
     """
     Parses structural details, saves endpoint models recursively,
@@ -337,6 +424,7 @@ def extract_apis():
 
 
 @app.route("/generate-pytest", methods=["POST"])
+@login_required
 def generate_pytest_scripts():
     """
     Takes parsed collection APIs, applies hybrid rule-based and Gemini AI logic to
@@ -418,6 +506,7 @@ def generate_pytest_scripts():
 
 
 @app.route("/generate-recommendations", methods=["POST"])
+@login_required
 def generate_recommendations():
     """
     Inspects API layouts to generate positive, negative, boundary, and security test suggestions 
@@ -473,6 +562,7 @@ def generate_recommendations():
 
 
 @app.route("/results")
+@login_required
 def get_results():
     """
     Gathers compiled code details, metrics, and report status files. Supports format=json
@@ -537,6 +627,7 @@ def get_results():
 
 
 @app.route("/download")
+@login_required
 def download_output():
     """
     Serves individual source files or bundles full Pytest automation packages (ZIP format)

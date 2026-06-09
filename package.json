@@ -3,7 +3,8 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "build": "echo 'Bypassing Node-based compilation for pure Python/Flask project'",
-    "dev": "echo 'Bypassing Node-based dev server for pure Python/Flask project'"
+    "build": "echo 'Building Python Project'",
+    "dev": "python3 app.py",
+    "start": "python3 app.py"
   }
 }

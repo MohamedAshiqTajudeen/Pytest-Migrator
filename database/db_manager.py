@@ -87,6 +87,15 @@ class DBManager:
                 generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (api_id) REFERENCES api_details(id) ON DELETE CASCADE
             );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                full_name TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
             """
         ]
 
@@ -222,3 +231,31 @@ class DBManager:
             cursor = conn.cursor()
             cursor.execute(sql, (api_id,))
             return [dict(row) for row in cursor.fetchall()]
+
+    # --- USER AUTH LOGISTICS ---
+
+    def insert_user(self, full_name, email, password_hash):
+        """Creates a new user account profile in safety."""
+        sql = """
+        INSERT INTO users (full_name, email, password_hash)
+        VALUES (?, ?, ?);
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql, (full_name, email, password_hash))
+                conn.commit()
+                return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            # Email address violation constraint
+            return None
+
+    def get_user_by_email(self, email):
+        """Looks up a user profile by their email handle."""
+        sql = "SELECT * FROM users WHERE email = ?;"
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, (email,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
