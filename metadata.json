@@ -1,0 +1,6 @@
+{
+  "name": "Postman Collection to Pytest Migrator",
+  "description": "A platform that converts Postman Collection JSON files into executable Pytest automation scripts using Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
