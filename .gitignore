@@ -1,3 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.db
+*.db-journal
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# System and Logs
 node_modules/
 build/
 dist/
