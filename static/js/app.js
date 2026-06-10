@@ -111,6 +111,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const onboardingWizard = document.getElementById('onboarding-wizard');
     if (onboardingWizard) {
         let currentStep = 1;
+        const urlParams = new URLSearchParams(window.location.search);
+        const stepParam = urlParams.get('step');
+        if (stepParam) {
+            currentStep = parseInt(stepParam) || 1;
+        }
         const totalSteps = 5;
         
         // Cached run states
@@ -471,7 +476,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             } else {
                 // Navigate to results report dashboard
-                window.location.href = `/results?collection_id=${cachedCollectionId}`;
+                window.location.href = `/complete-onboarding?collection_id=${cachedCollectionId}`;
             }
         });
 
@@ -483,8 +488,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         btnSkip.addEventListener('click', () => {
-            currentStep = 2; // Skip intro directly to upload screen
-            updateWizardUI();
+            window.location.href = '/complete-onboarding';
         });
 
         // Initialize Wizard layout
@@ -515,4 +519,379 @@ document.addEventListener('DOMContentLoaded', () => {
         // Fire initial setup loading
         updateCodePreview();
     }
+
+    // -----------------------------------------
+    // 6. Dashboard Event Listeners & Conversion Triggers
+    // -----------------------------------------
+    const runFullConversionForId = (btn, collectionId) => {
+        const originalHTML = btn.innerHTML;
+        btn.setAttribute('disabled', 'true');
+        btn.innerHTML = `
+            <svg class="animate-spin h-4 w-4 text-white inline mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Converting...</span>
+        `;
+
+        // 1. Run POST /generate-pytest
+        fetch('/generate-pytest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collection_id: collectionId })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                // 2. Run POST /generate-recommendations to compile reports fully and mark "Completed"
+                return fetch('/generate-recommendations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ collection_id: collectionId })
+                });
+            } else {
+                throw new Error(data.error || 'Pytest compilation failed.');
+            }
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                btn.innerHTML = `<span>✓ Completed</span>`;
+                btn.className = btn.className.replace('bg-orange-500', 'bg-teal-600').replace('hover:bg-orange-600', 'hover:bg-teal-700');
+                // Redirect user to results reports page directly
+                setTimeout(() => {
+                    window.location.href = `/results?collection_id=${collectionId}`;
+                }, 800);
+            } else {
+                throw new Error(data.error || 'Recommendations report failed.');
+            }
+        })
+        .catch(err => {
+            console.error('[Dashboard Translation Error]', err);
+            alert('Conversion pipeline aborted: ' + err.message);
+            btn.removeAttribute('disabled');
+            btn.innerHTML = originalHTML;
+        });
+    };
+
+    // Row convert button triggers
+    const rowConvertBtns = document.querySelectorAll('.btn-convert-collection');
+    rowConvertBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const collectionId = btn.dataset.collectionId;
+            if (collectionId) {
+                runFullConversionForId(btn, collectionId);
+            }
+        });
+    });
+
+    // Top-right dashboard converter trigger
+    const mainConvertBtn = document.getElementById('btn-dashboard-convert-collection');
+    const dashboardSel = document.getElementById('dashboard-collection-selector');
+    if (mainConvertBtn && dashboardSel) {
+        mainConvertBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const selectedColId = dashboardSel.value;
+            if (selectedColId) {
+                runFullConversionForId(mainConvertBtn, selectedColId);
+            } else {
+                alert('Please select a collection to convert.');
+            }
+        });
+    }
+
+    // -----------------------------------------
+    // 7. Dashboard Upload Workflow & Full Pipeline Execution (BUG 2 & BUG 3)
+    // -----------------------------------------
+    const dbUploadSection = document.getElementById('dashboard-upload-section');
+    const dbDropzone = document.getElementById('dashboard-collection-dropzone');
+    const dbFileInput = document.getElementById('dashboard-collection-file-input');
+    const dbSelectBtn = document.getElementById('btn-dashboard-select-file');
+    const dbCloseBtn = document.getElementById('btn-close-dashboard-upload');
+    const dbPipelineStatus = document.getElementById('dashboard-pipeline-status');
+    const dbAlert = document.getElementById('dashboard-upload-alert');
+
+    // Trigger open and focus if action=upload parameter exists on URL query
+    if (dbUploadSection) {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('action') === 'upload') {
+            dbUploadSection.classList.remove('hidden');
+            dbUploadSection.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Intercept any sidebar Upload Collection clicks if they happen on this same dashboard page
+        document.querySelectorAll('a[href*="action=upload"]').forEach(anchor => {
+            anchor.addEventListener('click', (e) => {
+                const isDashboardPath = window.location.pathname === '/dashboard' || window.location.pathname.endsWith('/dashboard');
+                if (isDashboardPath) {
+                    e.preventDefault();
+                    dbUploadSection.classList.remove('hidden');
+                    dbUploadSection.scrollIntoView({ behavior: 'smooth' });
+                    // Ensure the dropzone is reset and showing
+                    dbDropzone.classList.remove('hidden');
+                    if (dbPipelineStatus) dbPipelineStatus.classList.add('hidden');
+                    if (dbAlert) dbAlert.classList.add('hidden');
+                    history.pushState(null, '', '/dashboard?action=upload');
+                }
+            });
+        });
+
+        // Close button handler
+        if (dbCloseBtn) {
+            dbCloseBtn.addEventListener('click', () => {
+                dbUploadSection.classList.add('hidden');
+                // Clean input fields
+                if (dbFileInput) dbFileInput.value = '';
+                if (dbPipelineStatus) dbPipelineStatus.classList.add('hidden');
+                if (dbAlert) dbAlert.classList.add('hidden');
+            });
+        }
+
+        // Dropzone interactions
+        if (dbDropzone && dbFileInput && dbSelectBtn) {
+            dbSelectBtn.addEventListener('click', () => dbFileInput.click());
+
+            dbFileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    processDashboardFileStream(e.target.files[0]);
+                }
+            });
+
+            dbDropzone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dbDropzone.classList.add('border-orange-500', 'bg-orange-500/5');
+            });
+
+            ['dragleave', 'dragend'].forEach(evt => {
+                dbDropzone.addEventListener(evt, () => {
+                    dbDropzone.classList.remove('border-orange-500', 'bg-orange-500/5');
+                });
+            });
+
+            dbDropzone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dbDropzone.classList.remove('border-orange-500', 'bg-orange-500/5');
+                if (e.dataTransfer.files.length > 0) {
+                    processDashboardFileStream(e.dataTransfer.files[0]);
+                }
+            });
+        }
+    }
+
+    const setPipelineStepUI = (stepNum, status) => {
+        const item = document.getElementById(`status-step-${stepNum}`);
+        if (!item) return;
+        const dot = item.querySelector('.step-dot');
+
+        if (status === 'processing') {
+            item.className = "text-xs flex items-center space-x-2 text-orange-500 font-bold";
+            dot.className = "step-dot w-5 h-5 rounded-full bg-orange-500 text-white font-bold text-[10px] flex items-center justify-center animate-pulse";
+        } else if (status === 'completed') {
+            item.className = "text-xs flex items-center space-x-2 text-teal-600 dark:text-teal-400 font-medium";
+            dot.className = "step-dot w-5 h-5 rounded-full bg-teal-500 text-white font-bold text-[10px] flex items-center justify-center";
+            dot.innerHTML = "✓";
+        } else {
+            item.className = "text-xs flex items-center space-x-2 text-slate-400";
+            dot.className = "step-dot w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 font-bold text-[10px] flex items-center justify-center";
+            dot.innerHTML = stepNum;
+        }
+    };
+
+    const processDashboardFileStream = (file) => {
+        if (!file.name.endsWith('.json')) {
+            showDashboardUploadError("Invalid format. Please select a valid .json Postman collection layout.");
+            return;
+        }
+
+        if (file.size > 5 * 1024 * 1024) {
+            showDashboardUploadError("File size limit exceeded. Choose collections under 5 MB.");
+            return;
+        }
+
+        // Clear alerts and open progress logs
+        dbAlert.classList.add('hidden');
+        dbPipelineStatus.classList.remove('hidden');
+        dbDropzone.classList.add('hidden');
+
+        // Reset step state UI indicators
+        [1, 2, 3, 4].forEach(n => setPipelineStepUI(n, 'idle'));
+
+        // Step 1: Uploading File
+        setPipelineStepUI(1, 'processing');
+        const formData = new FormData();
+        formData.append('file', file);
+
+        let collectionId = null;
+        let fileCachedPath = null;
+
+        fetch('/upload', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                collectionId = data.collection_id;
+                fileCachedPath = data.file_cached_path;
+
+                setPipelineStepUI(1, 'completed');
+                // Step 2: Extraction
+                setPipelineStepUI(2, 'processing');
+
+                return fetch('/extract', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        collection_id: collectionId,
+                        file_cached_path: fileCachedPath
+                    })
+                });
+            } else {
+                throw new Error(data.error || "Failed uploading structural components.");
+            }
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                setPipelineStepUI(2, 'completed');
+                // Step 3: Pytest Compilation
+                setPipelineStepUI(3, 'processing');
+
+                return fetch('/generate-pytest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        collection_id: collectionId,
+                        file_cached_path: fileCachedPath
+                    })
+                });
+            } else {
+                throw new Error(data.error || "Database modeling extraction failed.");
+            }
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                setPipelineStepUI(3, 'completed');
+                // Step 4: Suggestions Generation
+                setPipelineStepUI(4, 'processing');
+
+                return fetch('/generate-recommendations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        collection_id: collectionId
+                    })
+                });
+            } else {
+                throw new Error(data.error || "Pytest test compiler failed.");
+            }
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                setPipelineStepUI(4, 'completed');
+                
+                // Done successfully, navigate them immediately to results inspection workspace
+                setTimeout(() => {
+                    window.location.href = `/results?collection_id=${collectionId}`;
+                }, 1000);
+            } else {
+                throw new Error(data.error || "Recommendations report generation failed.");
+            }
+        })
+        .catch(err => {
+            console.error('[Dashboard Pipeline Error]', err);
+            showDashboardUploadError(err.message || "Network execution connection error.");
+            dbDropzone.classList.remove('hidden');
+        });
+    };
+
+    const showDashboardUploadError = (msg) => {
+        dbAlert.textContent = msg;
+        dbAlert.classList.remove('hidden');
+    };
+
+    // Deletion confirmation handler with elegant, iframe-safe two-step triggers
+    document.querySelectorAll('.btn-delete-collection').forEach(btn => {
+        let isArmed = false;
+        let originalHTML = btn.innerHTML;
+        let timer = null;
+
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const collectionId = btn.getAttribute('data-collection-id');
+
+            if (!isArmed) {
+                // First click: arm the button
+                isArmed = true;
+                btn.classList.remove('bg-rose-500/10', 'text-rose-600');
+                btn.classList.add('bg-rose-600', 'text-white');
+                const textSpan = btn.querySelector('.btn-text');
+                if (textSpan) textSpan.textContent = 'Confirm Delete?';
+
+                // Automatically disarm/reset after 3 seconds if not clicked again
+                timer = setTimeout(() => {
+                    resetButton();
+                }, 3000);
+            } else {
+                // Second click: proceed with actual deletion!
+                clearTimeout(timer);
+                btn.disabled = true;
+                const textSpan = btn.querySelector('.btn-text');
+                if (textSpan) textSpan.textContent = 'Deleting...';
+
+                fetch('/delete-collection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ collection_id: collectionId })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        if (textSpan) textSpan.textContent = 'Deleted!';
+                        btn.classList.remove('bg-rose-605', 'bg-rose-600');
+                        btn.classList.add('bg-teal-600');
+                        
+                        // Check if we are currently looking at results for this deleted collection
+                        const urlParams = new URLSearchParams(window.location.search);
+                        const isResultsPage = window.location.pathname.includes('/results') || window.location.pathname.includes('/reports');
+                        const urlCollectionId = urlParams.get('collection_id');
+                        
+                        setTimeout(() => {
+                            if (isResultsPage && (urlCollectionId === collectionId || !urlCollectionId)) {
+                                // Redirect to dashboard if the current detailed report page is deleted
+                                window.location.href = '/dashboard';
+                            } else {
+                                // Just reload the page to refresh the view
+                                window.location.reload();
+                            }
+                        }, 500);
+                    } else {
+                        // Safe notification within page context or non-blocking console error
+                        console.error('Delete failed:', data.error);
+                        resetButton();
+                    }
+                })
+                .catch(err => {
+                    console.error('[Delete error]', err);
+                    resetButton();
+                });
+            }
+        });
+
+        function resetButton() {
+            isArmed = false;
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+            btn.className = "btn-delete-collection inline-flex items-center px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-600 hover:text-white border border-rose-500/20 hover:border-rose-600 text-xs text-rose-600 dark:text-rose-450 font-medium transition-all space-x-1";
+            // For the reports detail page, keep the large padding classes
+            if (btn.classList.contains('px-4') && btn.classList.contains('py-3')) {
+                btn.className = "btn-delete-collection px-4 py-3 rounded-xl text-sm font-semibold bg-rose-500/10 hover:bg-rose-600 hover:text-white border border-rose-500/20 hover:border-rose-600 text-rose-600 dark:text-rose-450 transition-all flex items-center space-x-2";
+            }
+        }
+    });
 });

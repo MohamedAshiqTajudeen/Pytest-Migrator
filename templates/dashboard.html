@@ -31,7 +31,7 @@
             <!-- Brand Logo -->
             <a href="/" class="flex items-center space-x-3">
                 <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-orange-500 to-blue-500 p-0.5 flex items-center justify-center">
-                    <div class="w-full h-full bg-slate-100 dark:bg-slate-900 rounded-[7px] flex items-center justify-center">
+                    <div class="w-full h-full bg-slate-900 rounded-[7px] flex items-center justify-center">
                         <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                             <path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round"/>
                         </svg>
@@ -51,7 +51,7 @@
                     <span>Dashboard Console</span>
                 </a>
 
-                <a href="/onboarding" class="flex items-center space-x-3 px-3 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-900 transition">
+                <a href="/dashboard?action=upload" class="flex items-center space-x-3 px-3 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-900 transition">
                     <svg class="w-4.5 h-4.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path>
                     </svg>
@@ -98,12 +98,30 @@
                 <h1 class="text-3xl font-extrabold text-slate-900 dark:text-white">Workspace Analytics Console</h1>
                 <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Review previously converted schemas, test cases logs, and recommendations database catalogs.</p>
             </div>
-            <a href="/onboarding" class="px-5 py-3 rounded-xl text-sm font-semibold bg-orange-500 text-white hover:bg-orange-600 transition flex items-center space-x-2 shadow shadow-orange-500/25">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path>
-                </svg>
-                <span>Convert Collection</span>
-            </a>
+            <div class="flex items-center space-x-3">
+                {% if collections|length > 0 %}
+                <div class="relative">
+                    <select id="dashboard-collection-selector" class="block w-48 sm:w-64 px-3 py-2.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 focus:outline-none transition">
+                        {% for col in collections %}
+                        <option value="{{ col.id }}">{{ col.collection_name }} ({{ col.total_apis }} APIs)</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button id="btn-dashboard-convert-collection" class="px-5 py-3 rounded-xl text-sm font-semibold bg-orange-500 text-white hover:bg-orange-600 transition flex items-center space-x-2 shadow shadow-orange-500/25">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                        <path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span>Convert Collection</span>
+                </button>
+                {% else %}
+                <a href="/dashboard?action=upload" class="px-5 py-3 rounded-xl text-sm font-semibold bg-orange-500 text-white hover:bg-orange-600 transition flex items-center space-x-2 shadow shadow-orange-500/25">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    <span>Convert Collection</span>
+                </a>
+                {% endif %}
+            </div>
         </div>
 
         <!-- FOUR CORE SUMMARY KPI STATS CARDS -->
@@ -175,6 +193,66 @@
             </div>
         </section>
 
+        <!-- DASHBOARD DIRECT PIPELINE RUN & UPLOAD SECTION (BUG 2 & BUG 3) -->
+        <section id="dashboard-upload-section" class="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/30 space-y-4 shadow-sm hidden">
+             <!-- Title/Header -->
+             <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                  <h3 class="text-sm font-extrabold text-slate-800 dark:text-white flex items-center space-x-2">
+                       <svg class="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                       <span>Direct Conversion Pipeline - Upload Collection</span>
+                  </h3>
+                  <button id="btn-close-dashboard-upload" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-xs font-semibold">✕ Close Section</button>
+             </div>
+             
+             <!-- Dropzone -->
+             <div id="dashboard-collection-dropzone" class="cursor-pointer border-2 border-dashed border-slate-300 dark:border-slate-800 hover:border-orange-500/50 rounded-2xl p-6 text-center bg-slate-50 dark:bg-slate-900/10 transition-colors">
+                 <input type="file" id="dashboard-collection-file-input" class="hidden" accept=".json">
+                 <div class="space-y-3">
+                     <div class="w-10 h-10 rounded-xl bg-orange-500/10 text-orange-500 flex items-center justify-center mx-auto">
+                          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                          </svg>
+                     </div>
+                     <div>
+                          <button type="button" id="btn-dashboard-select-file" class="px-4 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-750 dark:text-slate-300 text-xs font-bold rounded-lg border border-slate-300 dark:border-slate-705 hover:bg-slate-200 dark:hover:bg-slate-700 transition">Select File</button>
+                          <span class="text-slate-500 text-xs block mt-1">or drag and drop your JSON layout directly here</span>
+                     </div>
+                 </div>
+             </div>
+
+             <!-- Live Conversion progress steps tracker -->
+             <div id="dashboard-pipeline-status" class="hidden space-y-3">
+                  <div class="p-4 bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2">
+                       <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Conversion Pipeline Progress:</h4>
+                       <div class="space-y-1.5">
+                            <!-- Step 1 indicator -->
+                            <div id="status-step-1" class="text-xs flex items-center space-x-2 text-slate-400">
+                                 <span class="step-dot w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-850 font-bold text-[10px] flex items-center justify-center text-slate-600">1</span>
+                                 <span>Upload & Syntax Check</span>
+                            </div>
+                            <!-- Step 2 indicator -->
+                            <div id="status-step-2" class="text-xs flex items-center space-x-2 text-slate-400">
+                                 <span class="step-dot w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-850 font-bold text-[10px] flex items-center justify-center text-slate-600">2</span>
+                                 <span>API Methods Structuring</span>
+                            </div>
+                            <!-- Step 3 indicator -->
+                            <div id="status-step-3" class="text-xs flex items-center space-x-2 text-slate-400">
+                                 <span class="step-dot w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-850 font-bold text-[10px] flex items-center justify-center text-slate-600">3</span>
+                                 <span>Hybrid Pytest Generation (Local + Gemini AI)</span>
+                            </div>
+                            <!-- Step 4 indicator -->
+                            <div id="status-step-4" class="text-xs flex items-center space-x-2 text-slate-400">
+                                 <span class="step-dot w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-850 font-bold text-[10px] flex items-center justify-center text-slate-600">4</span>
+                                 <span>Boundary Testing Recommendations</span>
+                            </div>
+                       </div>
+                  </div>
+             </div>
+
+             <!-- Alerts -->
+             <div id="dashboard-upload-alert" class="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs text-rose-500 hidden"></div>
+        </section>
+
         <!-- PREVIOUSLY LOADED SQL COLLECTIONS LISTS TABLE -->
         <section class="space-y-4">
             <div class="flex items-center justify-between">
@@ -225,11 +303,22 @@
                                     {% endif %}
                                 </td>
                                 <td class="py-4 px-6 text-xs text-slate-500">{{ col.uploaded_by }}</td>
-                                <td class="py-4 px-6 text-right">
+                                <td class="py-4 px-6 text-right flex items-center justify-end space-x-2">
+                                    {% if col.status != 'Completed' %}
+                                    <button class="btn-convert-collection inline-flex items-center px-3 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 border border-orange-600 text-xs text-white font-medium transition space-x-1" data-collection-id="{{ col.id }}">
+                                        <span>Convert</span>
+                                    </button>
+                                    {% endif %}
                                     <a href="/results?collection_id={{ col.id }}" class="inline-flex items-center px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 font-medium transition space-x-1">
                                         <span>Inspect reports</span>
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                                     </a>
+                                    <button class="btn-delete-collection inline-flex items-center px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-600 hover:text-white border border-rose-500/20 hover:border-rose-600 text-xs text-rose-600 dark:text-rose-400 font-medium transition-all space-x-1" data-collection-id="{{ col.id }}">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                        </svg>
+                                        <span class="btn-text">Delete</span>
+                                    </button>
                                 </td>
                             </tr>
                             {% endfor %}

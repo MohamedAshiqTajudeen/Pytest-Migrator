@@ -168,7 +168,7 @@ def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if "user_id" not in session:
-            if request.path in ["/upload", "/extract", "/generate-pytest", "/generate-recommendations"] or request.headers.get("Content-Type") == "application/json" or request.is_json:
+            if request.path in ["/upload", "/extract", "/generate-pytest", "/generate-recommendations", "/delete-collection"] or request.headers.get("Content-Type") == "application/json" or request.is_json:
                 return jsonify({"success": False, "error": "Authentication holding pattern. Please log in first."}), 401
             return redirect(url_for("login_page"))
         return f(*args, **kwargs)
@@ -184,13 +184,33 @@ def health_check():
 @app.route("/")
 def landing_page():
     """Serves the main landing introductory screen."""
+    if "user_id" in session:
+        return redirect(url_for("dashboard_page"))
     return render_template("landing.html")
+
+
+def check_password_complexity(password: str) -> bool:
+    """Enforces 8+ characters, 1 uppercase, 1 lowercase, 1 number, and 1 special."""
+    if len(password) < 8:
+        return False
+    if not re.search(r'[A-Z]', password):
+        return False
+    if not re.search(r'[a-z]', password):
+        return False
+    if not re.search(r'[0-9]', password):
+        return False
+    if not re.search(r'[^A-Za-z0-9]', password):
+        return False
+    return True
 
 
 @app.route("/register", methods=["GET", "POST"])
 def register_page():
     """Handles new developer registration and account provisioning."""
     if "user_id" in session:
+        user = db.get_user_by_id(session["user_id"])
+        if user and user.get("onboarding_completed", 0) == 1:
+            return redirect(url_for("dashboard_page"))
         return redirect(url_for("onboarding_page"))
 
     if request.method == "POST":
@@ -205,8 +225,11 @@ def register_page():
         if "@" not in email:
             return render_template("register.html", error="Please provide a valid company email address.")
 
-        if len(password) < 6:
-            return render_template("register.html", error="Password criteria fail. Minimal length is 6 characters.")
+        if not check_password_complexity(password):
+            return render_template(
+                "register.html",
+                error="Password does not meet complexity requirements. Minimum 8 characters, with 1 uppercase, 1 lowercase, 1 number, and 1 special character required."
+            )
 
         if password != confirm_password:
             return render_template("register.html", error="Password mismatch. Please verify confirmation entry.")
@@ -237,6 +260,9 @@ def register_page():
 def login_page():
     """Renders the workspace credential gate and verifies user sessions."""
     if "user_id" in session:
+        user = db.get_user_by_id(session["user_id"])
+        if user and user.get("onboarding_completed", 0) == 1:
+            return redirect(url_for("dashboard_page"))
         return redirect(url_for("onboarding_page"))
 
     if request.method == "POST":
@@ -245,15 +271,19 @@ def login_page():
         
         if not email or "@" not in email:
             return render_template("login.html", error="Please provide a valid QA or development email.")
-        if not password or len(password) < 6:
-            return render_template("login.html", error="Password validation failed. Minimum 6 characters required.")
+        if not password:
+            return render_template("login.html", error="Password validation failed.")
             
         user = db.get_user_by_email(email)
         if user and check_password_hash(user["password_hash"], password):
             session["user_id"] = user["id"]
             session["email"] = user["email"]
             session["full_name"] = user["full_name"]
-            return redirect(url_for("onboarding_page"))
+            
+            if user.get("onboarding_completed", 0) == 0:
+                return redirect(url_for("onboarding_page"))
+            else:
+                return redirect(url_for("dashboard_page"))
         else:
             return render_template("login.html", error="Invalid email address or signature credentials.")
 
@@ -271,13 +301,36 @@ def logout_action():
 @login_required
 def onboarding_page():
     """Displays the workflow setup instructions wizard."""
+    user_id = session.get("user_id")
+    if user_id:
+        user = db.get_user_by_id(user_id)
+        if user and user.get("onboarding_completed", 0) == 1:
+            return redirect(url_for("dashboard_page"))
     return render_template("onboarding.html")
+
+
+@app.route("/complete-onboarding")
+@login_required
+def complete_onboarding_route():
+    """Marks onboarding as completed and redirects to dashboard or results reports."""
+    user_id = session.get("user_id")
+    if user_id:
+        db.update_user_onboarding_completed(user_id, 1)
+        
+    collection_id = request.args.get("collection_id")
+    if collection_id:
+        return redirect(url_for("get_results", collection_id=collection_id))
+    return redirect(url_for("dashboard_page"))
 
 
 @app.route("/dashboard")
 @login_required
 def dashboard_page():
     """Renders the main operation workspace panel."""
+    user_id = session.get("user_id")
+    if user_id:
+        db.update_user_onboarding_completed(user_id, 1)
+
     collections = db.get_all_collections()
     return render_template("dashboard.html", collections=collections)
 
@@ -434,8 +487,27 @@ def generate_pytest_scripts():
     collection_id = data.get("collection_id")
     file_cached_path = data.get("file_cached_path")
 
-    if not collection_id or not file_cached_path or not os.path.exists(file_cached_path):
+    if not collection_id:
         return jsonify({"success": False, "error": "Parameter configurations missing."}), 400
+
+    collection = db.get_collection(collection_id)
+    if not collection:
+        return jsonify({"success": False, "error": "Collection not found in database."}), 404
+
+    if not file_cached_path or not os.path.exists(file_cached_path):
+        file_name = collection.get("file_name")
+        if file_name:
+            matched_files = [f for f in os.listdir(UPLOAD_FOLDER) if f.endswith(f"_{file_name}")]
+            if matched_files:
+                matched_files.sort(reverse=True)
+                file_cached_path = os.path.join(UPLOAD_FOLDER, matched_files[0])
+            else:
+                exact_path = os.path.join(UPLOAD_FOLDER, file_name)
+                if os.path.exists(exact_path):
+                    file_cached_path = exact_path
+
+    if not file_cached_path or not os.path.exists(file_cached_path):
+        return jsonify({"success": False, "error": f"Cached postman collection file not found for collection ID {collection_id}."}), 400
 
     try:
         # Fetch actual stored APIs
@@ -505,6 +577,94 @@ def generate_pytest_scripts():
         return jsonify({"success": False, "error": f"Exception raised: {str(e)}"}), 500
 
 
+def ensure_collection_recommendations_and_testcases(collection_id):
+    """
+    Ensures that for every API in this collection, we have the following:
+    - Positive Test Suggestions (Positive)
+    - Negative Test Suggestions (Negative)
+    - Boundary Test Suggestions (Boundary)
+    - Security Recommendations (Security)
+    if they don't already exist.
+    """
+    try:
+        apis = db.get_apis_for_collection(collection_id)
+        if not apis:
+            return
+
+        for api in apis:
+            api_id = api["id"]
+            
+            # Check recommendations
+            recs = db.get_recommendations_for_api(api_id)
+            if not recs:
+                endpoint = api.get("endpoint", "/api")
+                method = api.get("method", "GET")
+                api_name = api.get("api_name", "API Endpoint")
+                
+                # 1. Positive Test Suggestions
+                db.insert_recommendation(
+                    api_id,
+                    f"Positive Test: Verify that a standard {method} request to '{endpoint}' returns a successful response (e.g., status 200 OK or 201 Created) containing the expected valid JSON body structure and response headers.",
+                    "Positive"
+                )
+                # 2. Negative Test Suggestions
+                db.insert_recommendation(
+                    api_id,
+                    f"Negative Test: Assert that the server gracefully rejects requests to '{endpoint}' with a 400 Bad Request or 422 Unprocessable entity response with descriptive error validation keys when invalid parameter types are passed.",
+                    "Negative"
+                )
+                # 3. Boundary Test Suggestions
+                db.insert_recommendation(
+                    api_id,
+                    f"Boundary Test: Test parameter boundaries and length limitations on '{endpoint}'. Verify that overly large request payloads or out-of-range dynamic parameter values are rejected, and that blank optional headers or values don't crash the server.",
+                    "Boundary"
+                )
+                # 4. Security Recommendations
+                db.insert_recommendation(
+                    api_id,
+                    f"Security Test: Verify that unauthenticated or improperly authorized requests tracking '{endpoint}' are securely blocked and yield proper 401 Unauthorized or 403 Forbidden statuses with no raw backend traceback leakage.",
+                    "Security"
+                )
+
+            # Check testcases
+            tcs = db.get_testcases_for_api(api_id)
+            if not tcs:
+                endpoint = api.get("endpoint", "/api")
+                method = api.get("method", "GET")
+                api_name = api.get("api_name", "API Endpoint")
+
+                # Positive Test Case
+                db.insert_testcase(
+                    api_id,
+                    f"Validate Successful {method} for {api_name}",
+                    "Positive",
+                    "assert status_code in [200, 201]"
+                )
+                # Negative Test Case
+                db.insert_testcase(
+                    api_id,
+                    f"Validate Malformed Payload Gating for {api_name}",
+                    "Negative",
+                    "assert status_code == 400 and 'error' in response"
+                )
+                # Boundary Test Case
+                db.insert_testcase(
+                    api_id,
+                    f"Validate Boundary Length Overflows for {api_name}",
+                    "Boundary",
+                    "assert status_code in [400, 422]"
+                )
+                # Security Test Case
+                db.insert_testcase(
+                    api_id,
+                    f"Validate Missing Authentication headers for {api_name}",
+                    "Security",
+                    "assert status_code in [401, 403]"
+                )
+    except Exception as ex:
+        logger.error(f"Seeder failed: {str(ex)}")
+
+
 @app.route("/generate-recommendations", methods=["POST"])
 @login_required
 def generate_recommendations():
@@ -519,32 +679,19 @@ def generate_recommendations():
         return jsonify({"success": False, "error": "Collection ID required."}), 400
 
     try:
+        # Generate the requested positive, negative, boundary, and security categories of recommendations and test cases
+        ensure_collection_recommendations_and_testcases(collection_id)
+
+        # Retrieve mapped records
         apis = db.get_apis_for_collection(collection_id)
         recommendation_list = []
-
         for api in apis:
             api_id = api["id"]
-            endpoint = api["endpoint"]
-            method = api["method"]
-
-            # Standard structured templates for recommendations
-            api_recs = [
-                ("Validate HTTP response codes and headers integrity on successful transaction setups.", "Functional"),
-                (f"Verify response handling on sending malformed fields inside body parameters of request.", "Security"),
-                ("Test payload stress parameters on boundary thresholds matching spec details.", "Performance")
-            ]
-
-            for text, rec_type in api_recs:
-                db.insert_recommendation(api_id, text, rec_type)
-
-            # Insert mock logical test cases for tracking
-            db.insert_testcase(api_id, "Verify Status 200 Success Route", "Positive", "Assert status code equals 200")
-            db.insert_testcase(api_id, "Check Invalid Input Payload Validation", "Negative", "Assert server handled gracefully")
-
+            recs_count = len(db.get_recommendations_for_api(api_id))
             recommendation_list.append({
                 "api_id": api_id,
                 "api_name": api["api_name"],
-                "recommendations_added": len(api_recs)
+                "recommendations_added": recs_count
             })
 
         db.update_collection_status(collection_id, "Completed")
@@ -559,6 +706,46 @@ def generate_recommendations():
         logger.error(f"Failed generating structural suggestions: {str(e)}")
         db.update_collection_status(collection_id, "Completed") # Fail safe completion setup
         return jsonify({"success": True, "message": "Recommendations produced via manual mappings."})
+
+
+@app.route("/delete-collection", methods=["POST"])
+@login_required
+def delete_collection():
+    """
+    Deletes the collection and all its associated test cases, recommendations, and artifacts.
+    """
+    data = request.get_json() or {}
+    collection_id = data.get("collection_id")
+
+    if not collection_id:
+        return jsonify({"success": False, "error": "Collection ID is required."}), 400
+
+    try:
+        collection = db.get_collection(collection_id)
+        if not collection:
+            return jsonify({"success": False, "error": "Collection not found in database."}), 404
+
+        # Best effort cleanup of referenced files
+        file_name = collection.get("file_name")
+        if file_name:
+            if os.path.exists(UPLOAD_FOLDER):
+                for f in os.listdir(UPLOAD_FOLDER):
+                    if f == file_name or f.endswith(f"_{file_name}"):
+                        try:
+                            os.remove(os.path.join(UPLOAD_FOLDER, f))
+                        except Exception:
+                            pass
+
+        # Perform the cascade deletion
+        deleted = db.delete_collection(collection_id)
+        if deleted:
+            return jsonify({"success": True, "message": "Collection and associated artifacts successfully deleted."})
+        else:
+            return jsonify({"success": False, "error": "Could not delete collection from database."}), 500
+
+    except Exception as e:
+        logger.error(f"Failed deleting collection: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/results")
@@ -580,6 +767,9 @@ def get_results():
             return render_template("reports.html", error="No collection records exist in storage yet.")
 
     try:
+        # Pre-seed recommendations and testcases to always guarantee complete reports
+        ensure_collection_recommendations_and_testcases(collection_id)
+
         collection = db.get_collection(collection_id)
         apis = db.get_apis_for_collection(collection_id)
         
@@ -592,13 +782,36 @@ def get_results():
             recommendations_extracted.extend(db.get_recommendations_for_api(api["id"]))
             testcases_extracted.extend(db.get_testcases_for_api(api["id"]))
 
+        # Map recommendations to what the template / UI HTML expects (rec_type, rec_text)
+        recommendations_mapped = []
+        for rec in recommendations_extracted:
+            recommendations_mapped.append({
+                "id": rec.get("id"),
+                "api_id": rec.get("api_id"),
+                "rec_type": rec.get("recommendation_type"),
+                "rec_text": rec.get("recommendation"),
+                "generated_at": rec.get("generated_at")
+            })
+
+        # Map testcases to what the template / UI HTML expects (tc_name, tc_type, assertion_spec)
+        testcases_mapped = []
+        for tc in testcases_extracted:
+            testcases_mapped.append({
+                "id": tc.get("id"),
+                "api_id": tc.get("api_id"),
+                "tc_name": tc.get("testcase_name"),
+                "tc_type": tc.get("testcase_type"),
+                "assertion_spec": tc.get("expected_result"),
+                "generated_at": tc.get("generated_at")
+            })
+
         report_stats = {
             "collection": collection,
             "apis": apis,
             "total_apis": len(apis),
             "total_scripts": len(scripts_extracted),
-            "total_recommendations": len(recommendations_extracted),
-            "total_testcases": len(testcases_extracted),
+            "total_recommendations": len(recommendations_mapped),
+            "total_testcases": len(testcases_mapped),
             "status": collection["status"] if collection else "Unknown"
         }
 
@@ -607,16 +820,16 @@ def get_results():
                 "success": True,
                 "stats": report_stats,
                 "scripts": scripts_extracted,
-                "recommendations": recommendations_extracted,
-                "testcases": testcases_extracted
+                "recommendations": recommendations_mapped,
+                "testcases": testcases_mapped
             })
 
         return render_template(
             "reports.html",
             stats=report_stats,
             scripts=scripts_extracted,
-            recommendations=recommendations_extracted,
-            testcases=testcases_extracted
+            recommendations=recommendations_mapped,
+            testcases=testcases_mapped
         )
 
     except Exception as e:

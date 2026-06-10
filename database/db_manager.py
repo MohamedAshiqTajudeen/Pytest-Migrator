@@ -94,6 +94,7 @@ class DBManager:
                 full_name TEXT NOT NULL,
                 email TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
+                onboarding_completed INTEGER DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             """
@@ -104,6 +105,20 @@ class DBManager:
             for query in queries:
                 cursor.execute(query)
             conn.commit()
+
+        # Dynamic schema adjustment migration for onboarding_completed
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT onboarding_completed FROM users LIMIT 1;")
+        except sqlite3.OperationalError:
+            try:
+                with self.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("ALTER TABLE users ADD COLUMN onboarding_completed INTEGER DEFAULT 0;")
+                    conn.commit()
+            except Exception:
+                pass
 
     # --- UPLOADED COLLECTIONS CRUD ---
 
@@ -135,6 +150,15 @@ class DBManager:
             cursor.execute(sql, (collection_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def delete_collection(self, collection_id):
+        """Deletes a collection and cascades to its API details and test artifacts."""
+        sql = "DELETE FROM uploaded_collections WHERE id = ?;"
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, (collection_id,))
+            conn.commit()
+            return cursor.rowcount > 0
 
     def get_all_collections(self):
         """Fetches all uploaded collections."""
@@ -258,4 +282,21 @@ class DBManager:
             cursor.execute(sql, (email,))
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def get_user_by_id(self, user_id):
+        """Looks up a user profile by their user ID."""
+        sql = "SELECT * FROM users WHERE id = ?;"
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, (user_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_user_onboarding_completed(self, user_id, completed=1):
+        """Updates the onboarding completion flag for a user."""
+        sql = "UPDATE users SET onboarding_completed = ? WHERE id = ?;"
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, (completed, user_id))
+            conn.commit()
 

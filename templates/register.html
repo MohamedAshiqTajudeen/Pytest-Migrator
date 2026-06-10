@@ -103,7 +103,7 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
                             </svg>
                         </span>
-                        <input type="password" id="reg-password" name="password" required placeholder="Min. 6 characters" minlength="6"
+                        <input type="password" id="reg-password" name="password" required placeholder="Min. 8 characters" minlength="8"
                                class="w-full pl-10 pr-12 py-2.5 rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/40 text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all">
                         
                         <!-- Toggle Password button -->
@@ -117,6 +117,20 @@
                             </svg>
                         </button>
                     </div>
+
+                    <!-- Password Strength Meter -->
+                    <div class="mt-2 text-xs flex flex-col space-y-1.5">
+                        <div class="flex items-center justify-between text-[11px]">
+                            <span class="text-slate-550 dark:text-slate-500 font-semibold uppercase">Strength:</span>
+                            <span id="password-strength-text" class="font-bold text-slate-400">Too Short</span>
+                        </div>
+                        <div class="h-1.5 w-full bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden flex">
+                            <div id="password-strength-bar" class="h-full bg-slate-400 rounded-full transition-all duration-300 w-0"></div>
+                        </div>
+                        <div class="text-[10px] text-slate-500 dark:text-slate-400 leading-normal mt-1 space-y-0.5">
+                            <span class="block">Policy: Min. 8 characters with 1 uppercase, 1 lowercase, 1 number, and 1 special character.</span>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Confirm Password field -->
@@ -128,7 +142,7 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
                             </svg>
                         </span>
-                        <input type="password" id="reg-confirm-password" name="confirm_password" required placeholder="Repeat chosen password" minlength="6"
+                        <input type="password" id="reg-confirm-password" name="confirm_password" required placeholder="Repeat chosen password" minlength="8"
                                class="w-full pl-10 pr-12 py-2.5 rounded-xl border border-slate-300 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/40 text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all">
                         
                         <!-- Toggle Confirm Password button -->
@@ -179,10 +193,52 @@
                 alertBox.classList.add('hidden');
             };
 
-            // Passwords Match Client Validation
+            // Passwords Match & Complexity Client Validation
             const form = document.getElementById('register-form');
             const passwordInput = document.getElementById('reg-password');
             const confirmInput = document.getElementById('reg-confirm-password');
+            const strengthText = document.getElementById('password-strength-text');
+            const strengthBar = document.getElementById('password-strength-bar');
+
+            passwordInput.addEventListener('input', () => {
+                const val = passwordInput.value;
+                if (!val) {
+                    strengthText.textContent = "Too Short";
+                    strengthText.className = "font-bold text-slate-400";
+                    strengthBar.className = "h-full bg-slate-400 rounded-full transition-all duration-300 w-0";
+                    return;
+                }
+
+                const lengthOk = val.length >= 8;
+                const upperOk = /[A-Z]/.test(val);
+                const lowerOk = /[a-z]/.test(val);
+                const numOk = /[0-9]/.test(val);
+                const specialOk = /[^A-Za-z0-9]/.test(val);
+
+                let strength = "Weak";
+                let barClass = "bg-rose-500 w-1/3";
+                let textClass = "text-rose-500";
+
+                const meetsAll = lengthOk && upperOk && lowerOk && numOk && specialOk;
+                
+                if (meetsAll) {
+                    strength = "Strong";
+                    barClass = "bg-teal-500 w-full";
+                    textClass = "text-teal-500";
+                } else if (lengthOk && (upperOk || lowerOk || numOk || specialOk)) {
+                    strength = "Medium";
+                    barClass = "bg-amber-500 w-2/3";
+                    textClass = "text-amber-500";
+                } else {
+                    strength = "Weak";
+                    barClass = "bg-rose-500 w-1/3";
+                    textClass = "text-rose-500";
+                }
+
+                strengthText.textContent = strength;
+                strengthText.className = "font-bold transition-colors duration-300 " + textClass;
+                strengthBar.className = "h-full rounded-full transition-all duration-300 " + barClass;
+            });
 
             form.addEventListener('submit', (e) => {
                 hideAlert();
@@ -191,9 +247,17 @@
                     showAlert("Passwords do not match. Please verify and re-type.");
                     return false;
                 }
-                if (passwordInput.value.length < 6) {
+                
+                const val = passwordInput.value;
+                const lengthOk = val.length >= 8;
+                const upperOk = /[A-Z]/.test(val);
+                const lowerOk = /[a-z]/.test(val);
+                const numOk = /[0-9]/.test(val);
+                const specialOk = /[^A-Za-z0-9]/.test(val);
+
+                if (!lengthOk || !upperOk || !lowerOk || !numOk || !specialOk) {
                     e.preventDefault();
-                    showAlert("Password must be at least 6 characters in length.");
+                    showAlert("Password does not meet complexity requirements. Minimum 8 characters, with 1 uppercase, 1 lowercase, 1 number, and 1 special character required.");
                     return false;
                 }
             });
